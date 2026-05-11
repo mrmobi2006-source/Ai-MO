@@ -129,27 +129,51 @@ def handle_image(ctx: dict) -> bool:
             "links": cur.get("image", ""),
         }
 
+        # ── استدعاء الـ API وتسجيل الرد الكامل ──────────────
+        raw_text = ""
+        result   = None
         try:
-            resp = requests.post(
+            resp     = requests.post(
                 IMAGE_API_URL, data=payload, timeout=120, verify=False
             )
-            code   = resp.status_code
-            result = resp.json() if code == 200 else None
+            raw_text = resp.text.strip()
+            # سجّل الرد دائماً حتى نعرف الشكل الحقيقي
+            logger.error("Image API [%s] response: %s", resp.status_code, raw_text[:500])
+            try:
+                result = resp.json()
+            except Exception:
+                result = None
         except Exception as e:
-            logger.error("Image API error: %s", e)
-            code, result = 0, None
+            logger.error("Image API connection error: %s", e)
+            raw_text = str(e)
 
         if stk_id:
             tg.delete_message(chat, stk_id)
 
         kb = Telegram.kb([[Telegram.btn("• رجوع •", "back")]])
 
-        if result and result.get("success") and result.get("url"):
-            md  = IMG_MODELS.get(cur.get("model", ""), cur.get("model", ""))
-            cap = f"<b>✅ الموديل:</b> {md}\n<b>النسبة:</b> {cur.get('ratio')} | <b>الدقة:</b> {result.get('resolution', cur.get('res'))}"
-            tg.send_photo(chat, result["url"], cap, {"has_spoiler": "true", "reply_markup": kb})
+        # ── فحص شامل للـ url في الـ response ────────────────
+        img_url = None
+        if result and isinstance(result, dict):
+            # جرّب كل المفاتيح المحتملة
+            for key in ("url", "image", "image_url", "link", "result", "output"):
+                if result.get(key):
+                    img_url = result[key]
+                    break
+
+        if img_url:
+            md        = IMG_MODELS.get(cur.get("model", ""), cur.get("model", ""))
+            res_label = (result or {}).get("resolution", cur.get("res"))
+            cap       = f"<b>✅ الموديل:</b> {md}\n<b>النسبة:</b> {cur.get('ratio')} | <b>الدقة:</b> {res_label}"
+            tg.send_photo(chat, img_url, cap, {"has_spoiler": "true", "reply_markup": kb})
         else:
-            tg.send_message(chat, "⚠️ <b>حدث خطأ في توليد الصورة، حاول مجدداً.</b>", {"reply_markup": kb})
+            # أظهر السبب الحقيقي للخطأ
+            err = raw_text[:300] if raw_text else "لا يوجد رد من الخادم"
+            tg.send_message(
+                chat,
+                f"⚠️ <b>خطأ من الـ API:</b>\n<code>{err}</code>",
+                {"reply_markup": kb},
+            )
 
         db.unlock_user(frm)
         return True
