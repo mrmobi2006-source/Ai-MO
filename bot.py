@@ -1,7 +1,6 @@
 """
 ================================================================
   VIP NanaBanana Bot - Main Handler (Python)
-  Runs via Gunicorn with multiple workers for concurrency.
 ================================================================
 """
 
@@ -20,8 +19,8 @@ from handlers.start import handle_start
 from handlers.image import handle_image
 from handlers.video import handle_video
 from handlers.admin import handle_admin
+from handlers.chat import handle_chat
 
-# ── Logging ──────────────────────────────────────────────────
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.ERROR,
@@ -33,16 +32,13 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
-
-# ── Bootstrap DB ─────────────────────────────────────────────
-db = Database()
+db  = Database()
 db.init()
 
 
 @app.route("/", methods=["GET"])
 def index():
-    test = request.args.get("test")
-    if test is not None:
+    if request.args.get("test") is not None:
         return jsonify({"status": "ok", "bot": BOT_USERNAME})
     return "NanaBanana VIP Bot is running 🍌", 200
 
@@ -52,36 +48,23 @@ def webhook():
     body = request.get_data(as_text=True)
     if not body:
         return "ok", 200
-
     try:
         update = json.loads(body)
     except json.JSONDecodeError:
         return "ok", 200
 
-    # ── نعالج الطلب في thread منفصل ──────────────────────────
-    # هذا يجعل webhook يرد فوراً لتيليغرام (200 OK)
-    # بينما يُعالَج الطلب الثقيل (فيديو/صورة) في الخلفية
-    t = threading.Thread(target=_process_update, args=(update,), daemon=True)
-    t.start()
-
+    threading.Thread(target=_process_update, args=(update,), daemon=True).start()
     return "ok", 200
 
 
 def _process_update(update: dict):
-    """معالجة الـ update في thread منفصل."""
     try:
         tg  = Telegram(BOT_TOKEN)
         vip = VipManager(db)
 
         msg   = update.get("message")
         cbq   = update.get("callback_query")
-        chat  = None
-        frm   = None
-        mid   = None
-        text  = None
-        data  = None
-        photo = None
-        cbid  = None
+        chat  = frm = mid = text = data = photo = cbid = None
 
         if msg:
             chat  = msg.get("chat", {}).get("id")
@@ -99,22 +82,18 @@ def _process_update(update: dict):
         if not frm or not chat:
             return
 
-        # Answer callback immediately
         if cbq and cbid:
             tg.call("answerCallbackQuery", {"callback_query_id": cbid})
 
-        # ── Duplicate guard ───────────────────────────────────
+        # حماية التكرار
         if msg and text:
-            raw = f"{chat}_{text}_{msg.get('message_id', '')}"
-            h   = hashlib.md5(raw.encode()).hexdigest()
+            h = hashlib.md5(f"{chat}_{text}_{msg.get('message_id','')}".encode()).hexdigest()
             if not db.check_and_insert_request(h):
                 return
 
-        # ── Busy guard ────────────────────────────────────────
         if not db.is_user_free(frm):
             return
 
-        # ── State ─────────────────────────────────────────────
         state_file = os.path.join("data", f"{frm}.json")
         state = {}
         if os.path.exists(state_file):
@@ -124,7 +103,6 @@ def _process_update(update: dict):
             except Exception:
                 state = {}
 
-        # ── Route ─────────────────────────────────────────────
         ctx = dict(
             tg=tg, vip=vip, db=db,
             chat=chat, frm=frm, mid=mid,
@@ -133,11 +111,10 @@ def _process_update(update: dict):
             cbq=cbq, msg=msg,
         )
 
-        # Admin commands
+        # أوامر الأدمن
         if text and text.startswith("/") and handle_admin(ctx):
             return
 
-        # Admin panel callback
         if data == "admin_panel":
             handle_admin(ctx)
             return
@@ -147,21 +124,24 @@ def _process_update(update: dict):
             handle_start(ctx)
             return
 
-        # Back button
         if data == "back":
             handle_start(ctx, is_back=True)
             return
 
-        # Image flow
+        # الصور
         if handle_image(ctx):
             return
 
-        # Video flow
+        # الفيديو
         if handle_video(ctx):
             return
 
-        # Fallback
-        if text and text != "/start" and not os.path.exists(state_file):
+        # المحادثة الذكية
+        if handle_chat(ctx):
+            return
+
+        # fallback
+        if text and not os.path.exists(state_file):
             tg.call("sendMessage", {
                 "chat_id":    chat,
                 "text":       "👋 <b>أهلاً! اضغط Start لتبدأ.</b>",
