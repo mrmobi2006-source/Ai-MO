@@ -5,7 +5,6 @@
 """
 
 import os
-import time
 from datetime import datetime
 
 from telegram import Telegram
@@ -21,7 +20,7 @@ def handle_start(ctx: dict, is_back: bool = False) -> None:
     cbq        = ctx["cbq"]
     state_file = ctx["state_file"]
 
-    # Clear any existing state
+    # مسح أي state موجود
     if os.path.exists(state_file):
         os.remove(state_file)
 
@@ -48,6 +47,9 @@ def handle_start(ctx: dict, is_back: bool = False) -> None:
         rows.append([
             Telegram.btn("🎬 نص ← فيديو",   "text_to_video"),
             Telegram.btn("🖼 صورة ← فيديو", "image_to_video"),
+        ])
+        rows.append([
+            Telegram.btn("🤖 محادثة ذكية", "ai_chat"),
         ])
     else:
         cap += "\n\n<b>🔒 هذا البوت VIP فقط.</b>\nتواصل مع الأدمن للحصول على صلاحية."
